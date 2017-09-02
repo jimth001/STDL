@@ -1,5 +1,6 @@
 package dm.tools;
 
+
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -7,20 +8,24 @@ import java.util.HashMap;
 class ConstantsOfCA {
     public static String UserFunctionNameBegin="$";
     public static String UserFunctionNameEnd=":=";
-    public static String regStr="(\\$([a-zA-Z0-9]|[\u4e00-\u9fa5])+:=([@a-zA-Z0-9\\.\u4e00-\u9fa5]+(==|!=|>>|<<|>=|<=)[@a-zA-Z0-9\\.\u4e00-\u9fa5]+[,\\|\\|]?)+)|([@a-zA-Z0-9\\.\u4e00-\u9fa5]+(==|!=|>>|<<|>=|<=)[@a-zA-Z0-9\\.\u4e00-\u9fa5]+[,\\|\\|]?)+";
-    public static String DisjunctionSperator="%";
+    public static String UserFunctionCalling="@";
+    //public static String regStr="(\\$([a-zA-Z0-9]|[\u4e00-\u9fa5])+:=([@a-zA-Z0-9\\.\u4e00-\u9fa5]+(==|!=|>>|<<|>=|<=)[@a-zA-Z0-9\\.\u4e00-\u9fa5]+[,\\|\\|]?)+)|([@a-zA-Z0-9\\.\u4e00-\u9fa5]+(==|!=|>>|<<|>=|<=)[@a-zA-Z0-9\\.\u4e00-\u9fa5]+[,\\|\\|]?)+";
+    public static String regStr=".+";
+    public static String DisjunctionSperator="\\|\\|";
     public static String []operators={"==","!=",">>","<<",">=","<="};
+    public static String varFieldSeparator="\\.";
 }
 /**
  * 这个类记载了若干条件表达式，通过getElementBy
  */
 public class ConditionAnalyser {//一种rule的一类condition的解析需要一个这样的对象。
-    private Method getElementByName=null;
+    //private Method getElementByName=null;
+    private Var varTable=null;
     private boolean enable=true;//是否可用
     class DisjunctionUnit {//析取式单元
-        public ArrayList<String> left;
+        public ArrayList<Var> left;
         public ArrayList<String> option;
-        public ArrayList<String> right;
+        public ArrayList<Var> right;
         public DisjunctionUnit(String s) throws IllegalConditionException{
             left=new ArrayList<>();
             option=new ArrayList<>();
@@ -28,12 +33,18 @@ public class ConditionAnalyser {//一种rule的一类condition的解析需要一
             String []strs=s.split(ConstantsOfCA.DisjunctionSperator);
             for(String su:strs) {
                 addSingleUnit(su);
-
             }
         }
         private void addSingleUnit(String su) throws IllegalConditionException{
-            int index=-1;
+            int index=su.indexOf(ConstantsOfCA.UserFunctionCalling);;
             int i=0;
+            if(index==0) {
+                option.add(ConstantsOfCA.UserFunctionCalling);
+                left.add(Var.parseVar(su.substring(index+ConstantsOfCA.UserFunctionCalling.length())));
+                right.add(null);
+                return;
+            }
+            index=-1;
             for(;i<ConstantsOfCA.operators.length;i++) {
                 if((index=su.indexOf(ConstantsOfCA.operators[i]))>-1) {
                     break;
@@ -41,8 +52,8 @@ public class ConditionAnalyser {//一种rule的一类condition的解析需要一
             }
             if(i<ConstantsOfCA.operators.length) {
                 option.add(ConstantsOfCA.operators[i]);
-                left.add(su.substring(0,index));
-                right.add(su.substring(index+ConstantsOfCA.operators[i].length()));
+                left.add(Var.parseVar(su.substring(0,index)));
+                right.add(Var.parseVar(su.substring(index+ConstantsOfCA.operators[i].length())));
             }
             else {
                 throw new IllegalConditionException("不合语法的Condition:"+su);
@@ -77,6 +88,13 @@ public class ConditionAnalyser {//一种rule的一类condition的解析需要一
     }
     private ArrayList<OneCondition> conditionsFuntions;
     private HashMap<String,Integer> functionRegistry;
+    public ConditionAnalyser(Var varTable) {
+        this.varTable=varTable;
+        conditionsFuntions=new ArrayList<>();
+        functionRegistry=new HashMap<>();
+        //this.getElementByName=getElementByName;
+        enable=true;
+    }
     public boolean addOneCondition(String s,int index) {
         s=s.replaceAll("\\s+","");
         if(!s.matches(ConstantsOfCA.regStr)) {
@@ -158,12 +176,18 @@ public class ConditionAnalyser {//一种rule的一类condition的解析需要一
             }
             catch (CallingUndefinedUserFunctionException e6) {
                 ErrorHandle.OutputErrorInformation(e6);
+                return false;
+            }
+            catch (TypeNotMatchException e7) {
+                ErrorHandle.OutputErrorInformation(e7);
+                return false;
             }
         }
         return true;
     }
     private boolean isOneDisjunctionTure(DisjunctionUnit du) throws IllegalOperatorException,NotNumberException,
-            IllegalAccessException, IllegalArgumentException, InvocationTargetException,CallingUndefinedUserFunctionException {
+            IllegalAccessException, IllegalArgumentException, InvocationTargetException,
+            CallingUndefinedUserFunctionException,TypeNotMatchException {
         for(int i=0;i<du.option.size();i++) {
             if(singleJudge(du.left.get(i),du.right.get(i),du.option.get(i))) {
                 return true;
@@ -171,87 +195,46 @@ public class ConditionAnalyser {//一种rule的一类condition的解析需要一
         }
         return false;
     }
-    public ConditionAnalyser(Method getElementByName) {
-        conditionsFuntions=new ArrayList<>();
-        functionRegistry=new HashMap<>();
-        this.getElementByName=getElementByName;
-        enable=true;
-    }
     public void clear() {
-        getElementByName=null;
+        //getElementByName=null;
         conditionsFuntions.clear();
         functionRegistry.clear();
         enable=false;
     }
-    private boolean singleJudge(String left,String right,String option) throws IllegalOperatorException,NotNumberException,
-            IllegalAccessException, IllegalArgumentException, InvocationTargetException,CallingUndefinedUserFunctionException {//判断一个left option right三元组是否为ture
-        if(option.equals("@")) {
+    private boolean singleJudge(Var left,Var right,String option) throws IllegalOperatorException,NotNumberException,
+            IllegalAccessException, IllegalArgumentException, InvocationTargetException,
+            CallingUndefinedUserFunctionException,TypeNotMatchException {//判断一个left option right三元组是否为ture
+        if(option.equals(ConstantsOfCA.UserFunctionCalling)) {
             try {
-                return isConditionITure(conditionsFuntions.get(functionRegistry.get(left)));
+                if(left.type!=VarType.Str) {
+                    throw new TypeNotMatchException("UserFunctionName不是标准的字符串类型："+left.toString());
+                }
+                return isConditionITure(conditionsFuntions.get(functionRegistry.get(left.strVal)));
             }
             catch (NullPointerException e) {
                 throw new CallingUndefinedUserFunctionException("调用了未定义的UserFunction："+left);
             }
         }
-        String leftReflectValue=null;
-        String rightReflectValue=null;
-        Object []objs=new Object[1];
-        objs[0]=left;
-        String tempGetValue=(String)getElementByName.invoke(getElementByName.getClass(),objs);
-        leftReflectValue=tempGetValue;
-        objs[0]=right;
-        tempGetValue=(String)getElementByName.invoke(getElementByName.getClass(),objs);
-        rightReflectValue=tempGetValue;
-        if(leftReflectValue!=null) {
-            left=leftReflectValue;
-        }
-        if(rightReflectValue!=null) {
-            right=rightReflectValue;
-        }
-        return compare(left,right,option);
-    }
-    private boolean compare(String left,String right,String operator) throws NotNumberException,IllegalOperatorException{
-        if(operator.equals("==")) {
-            return left.equals(right);
-        }
-        else if(operator.equals("!=")) {
-            return !left.equals(right);
-        }
-        //todo
-        else if(operator.equals(">>")){
-            try {
-                return Double.parseDouble(left)>Double.parseDouble(right);
-            }
-            catch (NumberFormatException e) {
-                try {
-                    return Integer.parseInt(left)>Integer.parseInt(right);
-                }
-                catch (NumberFormatException e2) {
-                    throw new NotNumberException("非数值类型："+left+"or"+right);
-                }
+        Var tempGetValue=null;
+        if(left.type==VarType.Str) {
+            tempGetValue=varTable.getElementByName(left.strVal.split(ConstantsOfCA.varFieldSeparator));
+            if(tempGetValue!=null) {
+                left=tempGetValue;
             }
         }
-        else if(operator.equals("<<")) {
-            return false;
+        tempGetValue=null;
+        if(right.type==VarType.Str) {
+            java.lang.Object[]args=new Object[1];
+            args[0]=right.strVal;
+            tempGetValue=varTable.getElementByName(right.strVal.split(ConstantsOfCA.varFieldSeparator));
+            if(tempGetValue!=null) {
+                right=tempGetValue;
+            }
         }
-        else if(operator.equals(">=")) {
-            return false;
-        }
-        else if(operator.equals("<=")) {
-            return false;
-        }
-        else{
-            throw new IllegalOperatorException("不合法的condition，没有标准的比较运算符。Operator:"+operator);
-        }
+        return left.compareTo(right,option);
     }
     class NotNumberException extends Exception {
         public NotNumberException(String msg) {
-            super(msg);
-        }
-    }
-    class IllegalOperatorException extends Exception {
-        public IllegalOperatorException(String msg)
-        {
             super(msg);
         }
     }
